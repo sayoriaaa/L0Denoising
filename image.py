@@ -11,6 +11,9 @@ from PIL import Image
 from typing import Tuple
 from scipy.sparse import coo_matrix
 import scipy.sparse as sp
+import cv2
+
+from lib import cuda_utils
 
 def get_gradient_operator(shape: Tuple):
     height, width = shape
@@ -59,6 +62,7 @@ def to_img(img):
 class Solver:
     def __init__(self, args):
         self.save_file = args.output
+        self.input_file = args.input
         self.log = args.verbose
 
         self.lamba = args.l
@@ -69,7 +73,7 @@ class Solver:
         self.beta = self.beta0
 
         self.image = np.array(Image.open(args.input).convert('RGB'))
-        self.I = np.moveaxis(self.image, -1, 0).astype(float) / 255
+        self.I = np.moveaxis(self.image, -1, 0).astype(float) / 256
         self.height, self.width = self.I[0].shape
 
         self._type = None
@@ -90,26 +94,37 @@ class Solver:
         print("Total Time: %f (s)" % (self.duration))
         print("Iterations: %d" % (self.iteration)) 
 
-    def detail_magnification(self):
+    def detail_magnification(self, use='hdr'):
         '''
         an application of image denoising, S will be converted
         include self.solve(), therefore call directly
         ''' 
-        Intensity = (20*self.I[0] + 40*self.I[1]+self.I[2])/61. # [H, W]
-        logIntensity = np.log10(Intensity).reshape(1, self.height, self.width) # [1, H, W]
-        # covert to be processed image to gray
+        
         image = self.I.copy()
-        self.I = logIntensity
+        factor = [20, 40, 1]
+        Inten = (factor[0]*image[0] + factor[1]*image[1]+factor[2]*image[2])/61. + 1e-5 # [H, W]
+        logInten = np.log10(Inten).reshape(1, self.height, self.width) # [1, H, W]
+        # covert to be processed image to gray
+        self.I = logInten
 
         self.solve()
+        logBase = self.S[0]
 
+        compressionfactor = 0
+        if use=='hdr':
+            compressionfactor = 0.2
+   
+        logDetail = logInten[0] - logBase[0]# [H, W]
         S = []
+        max_scale = -1
         for i in range(3):
-            logDetail = logIntensity[0] - self.S[0] # [H, W]
-            Detail = np.power(10, logDetail)
-            new = Detail / Intensity * image[i]
-            S.append(new)
-        self.S = np.array(S)
+            logOutIntensity = logBase*compressionfactor+logDetail
+            out = (np.power(10, logOutIntensity) / Inten) * image[i] 
+            max_scale =max(max_scale, np.max(out))
+            S.append(out)
+        S = np.array(S)
+        S = np.clip(S/max_scale, 0, 1)
+        self.S = np.array(S) 
 
     def save_fig(self):
         image = Image.fromarray(to_img(self.S))
@@ -239,7 +254,110 @@ class FFT_Solver(Solver):
             self.beta *= self.kappa
             cnt += 1
         self.iteration = cnt
+
+class FFT_Solver_CUDA(Solver):
+    def __init__(self, args):
+        super(FFT_Solver_CUDA, self).__init__(args)
+        self._type = 'FFT_CUDA'
+        conv_x = np.zeros(self.I[0].shape, dtype=np.float32)
+        conv_y = np.zeros(self.I[0].shape, dtype=np.float32)
+
+        conv_x[0][0], conv_x[0][self.width-1]  = -1, 1
+        conv_y[0][0], conv_y[self.height-1][0] = -1, 1
+
+        #conv_x[0][0], conv_x[0][1]  = -1, 1
+        #conv_y[0][0], conv_y[1][0] = -1, 1
+
+        conv_x.astype(np.complex64)
+        conv_y.astype(np.complex64)
+
+        self.otf_x = cuda_utils.fft2(conv_x)
+        self.otf_y = cuda_utils.fft2(conv_y)
+
+        self.MTF = np.power(np.abs(self.otf_x), 2) + np.power(np.abs(self.otf_y), 2)
+
+    def updateHV(self):
+        Hs = []
+        Vs = []
+        for i in range(self.chan):
+            H = np.zeros(self.S[i].shape)
+            V = np.zeros(self.S[i].shape)
+
+            V[0:self.height-1, :] = np.diff(self.S[i], axis=0) #dy
+            H[:, 0:self.width-1]  = np.diff(self.S[i], axis=1) #dx
+
+            t = np.power(H, 2) + np.power(V, 2) < self.lamba/self.beta
+            #print(t[0][0], t.shape)
+            V[t] = 0
+            H[t] = 0
+            Hs.append(H)
+            Vs.append(V)
+        return Hs, Vs
+
+    def updateS(self, H, V):
+        div = 1 + self.beta * self.MTF
+        for channel in range(self.chan):
+            res = cuda_utils.fft2(self.I[channel]) + self.beta * (np.conjugate(self.otf_x) * cuda_utils.fft2(H[channel].astype(np.complex64)) + np.conjugate(self.otf_y) * cuda_utils.fft2(V[channel].astype(np.complex64)))
+            res = res / div
+            res = cuda_utils.ifft2(res)
+            self.S[channel] = res.real
+        return    
     
+    def optimize(self):
+        cnt = 1
+        self.chan = self.I.shape[0]
+        while(self.beta < self.beta_max):
+            if self.log:
+                print('iter {}: beta={}'.format(cnt, self.beta))
+            H, V = self.updateHV()
+            self.updateS(H, V)
+            self.beta *= self.kappa
+            cnt += 1
+        self.iteration = cnt
+
+class Bi(Solver):
+    def __init__(self, args):
+        super(Bi, self).__init__(args)
+        self._type = 'Bi'
+    def optimize(self):
+        img = cv2.imread(self.input_file)
+        img = (img / 256).astype(np.float32)
+        img = cv2.bilateralFilter(img, 9, 150, 150)
+        self.iteration = 1
+
+        img = img[:,:,[2,1,0]] #bgr2rgb
+        img = np.array(img)
+        self.S = np.moveaxis(img, -1, 0).astype(float)
+
+    def detail_magnification(self, use='hdr'):
+        '''
+        an application of image denoising, S will be converted
+        include self.solve(), therefore call directly
+        ''' 
+        img = cv2.imread(self.input_file)
+        img = (img / 255).astype(np.float32)
+        Inten = (1*img[:,:,0] + 40*img[:,:,1] + 20*img[:,:,2]) / 61 + 1e-6#bgr
+        logInten = (np.log10(Inten+1e-6)).astype(np.float32)
+     
+        logBase = cv2.bilateralFilter(Inten, 9, 150, 150)
+        
+        image = self.I.copy()
+
+        compressionfactor = 0
+        if use=='hdr':
+            compressionfactor = 0.2
+   
+        logDetail = logInten - logBase# [H, W]
+        max_scale = -1
+        S = []
+        for i in range(3):
+            logOutIntensity = logBase*compressionfactor+logDetail
+            out = (np.power(10, logOutIntensity) / Inten) * image[i] 
+            max_scale =max(max_scale, np.max(out))
+            S.append(out)
+        S = np.array(S)
+        S = np.clip(S/max_scale, 0, 1)
+        self.S = np.array(S) 
 
 
 if __name__=='__main__':
@@ -266,10 +384,10 @@ if __name__=='__main__':
     parser.add_argument('-m', default='fft', 
         metavar='method', help="support three method: l0; fft; fft_cuda; l2(trivial)")
     
-    parser.add_argument('-enhance', action='store_true',
+    parser.add_argument('--enhance', action='store_true',
         help='output enhanced picture')
     
-    parser.add_argument('-hdr', action='store_true',
+    parser.add_argument('--hdr', action='store_true',
         help='output hdr picture')
     
     args = parser.parse_args()
@@ -280,15 +398,20 @@ if __name__=='__main__':
     elif args.m == 'l0':
         s = LinearSystem_Solver(args)
     elif args.m == 'fft_cuda':
-        pass
+        s = FFT_Solver_CUDA(args)
     elif args.m == 'l2':
         s = LinearSystem_SolverL2(args)
+    elif args.m == 'bi':
+        s = Bi(args)
     else:
         print('not supported method! please check help')
         sys.exit()
 
     if args.hdr or args.enhance:
-        s.detail_magnification()
+        if args.hdr:
+            s.detail_magnification()
+        if args.enhance:
+            s.detail_magnification(use='detail')
     else:
         s.solve()
 

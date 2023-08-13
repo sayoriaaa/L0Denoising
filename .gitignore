@@ -1,2 +1,6 @@
-res.jpg
+*.jpg
+*.png
+hdr
+build
+lib
 
