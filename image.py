@@ -315,6 +315,17 @@ class FFT_Solver_CUDA(Solver):
             cnt += 1
         self.iteration = cnt
 
+class FFT_Solver_CUDA2(FFT_Solver_CUDA):
+    def __init__(self, args):
+        super(FFT_Solver_CUDA2, self).__init__(args)
+        self._type = 'FFT_CUDA2'
+
+    def updateHV(self):
+        _, h, w = self.S.shape
+        Hs, Vs = cuda_utils.updateHV(self.S, h, w, self.lamba, self.beta)
+        return Hs, Vs
+    
+
 class Bi(Solver):
     def __init__(self, args):
         super(Bi, self).__init__(args)
@@ -399,6 +410,8 @@ if __name__=='__main__':
         s = LinearSystem_Solver(args)
     elif args.m == 'fft_cuda':
         s = FFT_Solver_CUDA(args)
+    elif args.m == 'fft_cuda2':
+        s = FFT_Solver_CUDA2(args)
     elif args.m == 'l2':
         s = LinearSystem_SolverL2(args)
     elif args.m == 'bi':

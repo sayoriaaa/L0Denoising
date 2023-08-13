@@ -37,7 +37,7 @@ python image.py -h
  分别给出了4+1种算法实现：
  - l0：基于CG求解的朴素方法
  - fft：基于FFT的加速（默认）
- - fft_cuda：将FFT替换为CUDA进行加速
+ - fft_cuda：将FFT替换为cufft进行加速
  - fft_cuda2：在fft_cuda的基础上增加自定义CUDA算子，进一步加速
  - l2：不保特征的平滑（$l2$范数无法保持特征的实验证明）
 

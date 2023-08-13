@@ -3,6 +3,10 @@
 #include <cufft.h>
 #include <complex>
 
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+#include <cmath>
+
 namespace py = pybind11;
 
 py::array_t<std::complex<float>> cufft_fft2(py::array_t<std::complex<float>> input) {
@@ -83,7 +87,56 @@ py::array_t<std::complex<float>> cufft_ifft2(py::array_t<std::complex<float>> in
     return result;
 }
 
+__global__ void computeHV(const float* input, float* H, float* V, int height, int width, float lambda, float beta) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (col < width - 1 && row < height - 1) {
+        int index = row * width + col;
+
+        V[index] = input[(row + 1) * width + col] - input[index]; // dy
+        H[index] = input[row * width + col + 1] - input[index]; // dx
+
+        float norm = std::sqrt(std::pow(H[index], 2) + std::pow(V[index], 2));
+        if (norm < lambda / beta) {
+            V[index] = 0;
+            H[index] = 0;
+        }
+    }
+    else if(col == width-1 || row == height-1) {
+        int index = row * width + col;
+        V[index] = 0;
+        H[index] = 0;
+    }
+}
+
+py::tuple updateHV(const py::array_t<float>& S, int height, int width, float lambda, float beta) {
+    py::buffer_info buf_info = S.request();
+    const float* S_ptr = static_cast<float*>(buf_info.ptr);
+
+    int chan = buf_info.shape[0];
+
+    py::array_t<float> Hs = py::array_t<float>({chan, height, width});
+    py::array_t<float> Vs = py::array_t<float>({chan, height, width});
+
+    float* Hs_ptr = static_cast<float*>(Hs.request().ptr);
+    float* Vs_ptr = static_cast<float*>(Vs.request().ptr);
+
+    for (int i = 0; i < chan; ++i) {
+        dim3 blockDim(16, 16);
+        dim3 gridDim((width + blockDim.x - 1) / blockDim.x, (height + blockDim.y - 1) / blockDim.y);
+
+        computeHV<<<gridDim, blockDim>>>(S_ptr + (i * height * width), Hs_ptr + (i * height * width), Vs_ptr + (i * height * width), height, width, lambda, beta);
+
+        cudaDeviceSynchronize();
+    }
+
+    return py::make_tuple(Hs, Vs);
+}
+
+
 PYBIND11_MODULE(cuda_utils, m) {
     m.def("fft2", &cufft_fft2, "Compute FFT using CUFFT");
     m.def("ifft2", &cufft_ifft2, "Compute IFFT using CUFFT");
+    m.def("updateHV", &updateHV, "Update H and V using CUDA");
 }
