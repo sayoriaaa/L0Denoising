@@ -3,4 +3,5 @@
 hdr
 build
 lib
+!benchmark.png
 

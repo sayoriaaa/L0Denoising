@@ -45,21 +45,14 @@ python image.py -h
  比如你想将`input/nbu.jpg`作为输入，使用FFT算法，设置$\lambda=0.01$
  ```
  python image.py -l 0.01 --input ./input/nbu.jpg
- python image.py -l 100 --input ./input/nbu.jpg -m l2
- python image.py -l 0.005 --input ./input/nbu.jpg
- python image.py -l 0.005 --input ./input/nbu.jpg --enhance
- python image.py -l 0.02 --input ./input/flower.png --enhance
- python image.py -l 0.005 --input ./input/nbu.jpg --hdr
- python image.py -l 0.02 --input ./input/hdr1.png --hdr
- python image.py -l 0.005 --input ./input/hdr2.png --hdr
- python image.py -l 0.05 --input ./input/hdr2.png --enhance
  python image.py -l 0.01 --input ./input/nbu.jpg -m bi --hdr
- python image.py -l 0.01 --input ./input/flower.png -m bi --enhance
- python image.py -l 0.02 --input ./input/hdr1.png --hdr --output hdr1.png -m bi
  python image.py -l 0.01 --input ./input/nbu.jpg -m fft_cuda
-
  ```
  如果不指定输出文件，将会在当前路径下生成`res.jpg`
+
+ 以下是$w/o$ CUDA和$w/$ CUDA的运行速度对比，你可以通过执行`python benchmark.py`得到该图片
+
+ ![](benchmark.png)
 
  同时，作为扩展复现了$L_0$论文的后半部分，你可以随意选择以上四种算法（当然优先选最快的），运行以下两种下游任务
 
@@ -77,6 +70,7 @@ python image.py -h
 执行以下脚本获得相应section的配图
 ```
 bash hdr.sh
+python benchmark.py
 ```
 
 
