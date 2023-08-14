@@ -50,7 +50,7 @@ python image.py -h
  ```
  如果不指定输出文件，将会在当前路径下生成`res.jpg`
 
- 以下是$w/o$ CUDA和$w/$ CUDA的运行速度对比，你可以通过执行`python benchmark.py`得到该图片
+ 以下是FFT, cuFFT和$w/$ custom CUDA的运行速度对比，你可以通过执行`python benchmark.py`得到该图片
 
  ![](benchmark.png)
 
