@@ -384,6 +384,134 @@ class AreaEdgeSolver(Solver):
         p = np.array([mesh.point(vertex) for vertex in mesh.vertices()])
         p_star = copy.deepcopy(p)
         return D, p, p_star
+    
+class AreaEdgeSolver_R(Solver):
+    def __init__(self, args):
+        super(AreaEdgeSolver_R, self).__init__(args)
+        self._type = 'Area Based Method w/ reg'
+        self.type = 'edge'
+        self.alpha = args.a
+
+    def get_gemma(self, mesh):
+        PI = 3.14159265359
+        cnt, sum = 0, 0
+        for heh in mesh.halfedges():
+            angle = mesh.calc_dihedral_angle(heh) * (180/PI) 
+            sum += abs(angle)
+            cnt += 1
+        return sum/cnt
+
+    def build_operator(self):
+        mesh = self.mesh
+        N_edge = mesh.n_edges()
+        N_vert = mesh.n_vertices()
+
+        if self.alpha == 0:
+            self.alpha = 0.1 * self.get_gemma(mesh)
+
+        # --------------build D and R--------------
+        D_row = []
+        D_col = []
+        D_data = []
+
+        R_data = []
+
+        for cnt, eh in enumerate(mesh.edges()):
+            heh1 = mesh.next_halfedge_handle(mesh.halfedge_handle(eh, 0)) # next edge of 1st halfedge of e
+            heh2 = mesh.next_halfedge_handle(mesh.halfedge_handle(eh, 1)) # next edge of 2nd halfedge of e
+
+            vh3, vh4 = mesh.from_vertex_handle(heh1), mesh.to_vertex_handle(heh1)
+            vh1, vh2 = mesh.from_vertex_handle(heh2), mesh.to_vertex_handle(heh2)
+            # corresponding to Figure 3
+            p1, p2, p3, p4 = mesh.point(vh1), mesh.point(vh2), mesh.point(vh3), mesh.point(vh4)
+            
+            S123 = 0.5 * np.linalg.norm(np.cross(p2 - p1, p2 - p3))
+            S134 = 0.5 * np.linalg.norm(np.cross(p4 - p1, p4 - p3))
+            l13 = np.linalg.norm(p1 - p3)
+
+            coef1 = (S123 * np.dot(p4 - p3, p3 - p1) + S134 * np.dot(p1 - p3, p3 - p2)) / (l13 * l13 * (S123 + S134))
+            coef2 = S134 / (S123 + S134)
+            coef3 = (S123 * np.dot(p3 - p1, p1 - p4) + S134 * np.dot(p2 - p1, p1 - p3)) / (l13 * l13 * (S123 + S134))
+            coef4 = S123 / (S123 + S134)
+
+            D_row.append(cnt)
+            D_col.append(vh1.idx())
+            D_data.append(coef1)
+
+            D_row.append(cnt)
+            D_col.append(vh2.idx())
+            D_data.append(coef2)
+
+            D_row.append(cnt)
+            D_col.append(vh3.idx())
+            D_data.append(coef3)
+
+            D_row.append(cnt)
+            D_col.append(vh4.idx())
+            D_data.append(coef4)
+
+            R_data.append(1)
+            R_data.append(-1)
+            R_data.append(1)
+            R_data.append(-1)
+
+        D = coo_matrix((D_data, (D_row, D_col)), shape=(N_edge, N_vert))
+        R = coo_matrix((R_data, (D_row, D_col)), shape=(N_edge, N_vert))
+        p = np.array([mesh.point(vertex) for vertex in mesh.vertices()])
+        p_star = copy.deepcopy(p)
+        return D, R, p, p_star
+    
+    def optimize(self) -> TriMesh:
+        mesh = self.mesh
+        N_edge = mesh.n_edges()
+        N_vert = mesh.n_vertices()
+
+        if self.type == 'edge':
+            N = N_edge
+        else: # type=='vert
+            N = N_vert
+
+        D, R, p, p_star = self.build_operator()
+        start_time = time.time()  
+        # --------------build linear system--------------
+        cnt = 1
+        while self.beta < self.beta_max:
+            # stage 1:
+            delta = D @ p
+            
+            for i in range(N):
+                if delta[i][0]**2 + delta[i][1]**2 + delta[i][2]**2 < self.lamba / self.beta:
+                    delta[i][0] = delta[i][1] = delta[i][2] = 0.0
+
+            # stage 2:
+            A = sp.eye(N_vert) + self.alpha * (R.transpose() @ R) + self.beta * (D.transpose() @ D)
+            b = p_star + self.beta * (D.transpose() @ delta)
+
+            if self.t_solver == 'ch':
+                factor = cholesky(A)
+            # p, info = sp.linalg.cg(A, b, x0=p)
+            for i in range(3):
+                if self.t_solver == 'cg':
+                    p[:,i], info = sp.linalg.cg(A, b[:,i], x0=p[:,i])
+                if self.t_solver == 'ch':
+                    # scipy cholesky
+                    # y = scipy.linalg.solve_triangular(L, b[:,i], lower=True, check_finite=False)
+                    # p[:,i] = scipy.linalg.solve_triangular(L.T, y, lower=True, check_finite=False)
+                    p[:,i] = factor.solve_A(b[:,i])
+            if self.log:
+                print('iter {}: beta={}, p[0,0]={}'.format(cnt, self.beta, p[0][0]))
+            cnt += 1
+            self.beta *= self.kappa
+            self.alpha *= 0.5
+        self.denoised_vert = p
+        final_time = time.time()
+        self.optimize_time = final_time - start_time
+        self.iteration = cnt
+        # --------------return mesh--------------
+        for i, vh in enumerate(mesh.vertices()):
+            mesh.set_point(vh, p[i])
+        self.denoised_mesh = mesh   
+        return mesh
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description="implementation of image smoothing via L0 gradient minimization")
@@ -413,8 +541,14 @@ if __name__=='__main__':
     parser.add_argument('-m', default='edge', 
         metavar='method', help="support three method: vert, edge, area")
     
-    parser.add_argument('-n', default=0.3, 
+    parser.add_argument('-n', type=float, default=0.3, 
         metavar='noise', help="ratio of average edge length")
+    
+    parser.add_argument('-r', '--regulation', action='store_true',
+        help='use regulation')
+    
+    parser.add_argument('-a', type=float, default=0, 
+        metavar='alpha', help="parameter of regulation")
     
     
     args = parser.parse_args()
@@ -425,7 +559,10 @@ if __name__=='__main__':
     elif args.m == 'edge':
         s = CotEdgeSolver(args)
     elif args.m == 'area':
-        s = AreaEdgeSolver(args)
+        if args.regulation:
+            s = AreaEdgeSolver_R(args)
+        else:
+            s = AreaEdgeSolver(args)
     elif args.m == 'vfft':
         s = VertexSolver_FFT(args)
     

@@ -81,6 +81,8 @@ python image.py -h
  - vert：基于顶点的数据结构，cot作为权重
  - edge：基于边的数据结构，cot作为权重
  - area：基于边的数据结构，面积作为权重
+  
+ 同时提供了`--regulation`选项，用于是否开启正则化(仅限于基于边的方法)，默认关闭。通过`-a`设置正则化的参数，默认为`0.1gamma`
  ```
  python mesh.py --input ./input/bunny_fine.obj --out ./bunny.obj -m vert
  python mesh.py -m vert 
@@ -111,6 +113,7 @@ python benchmark.py
 bash mesh_v.sh # 顶点方法
 bash mesh_e.sh # 边方法
 bash mesh_a.sh # 面积方法
+bash mesh_a_r.sh # 面积方法+正则化
 ```
 
 
