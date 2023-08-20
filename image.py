@@ -5,8 +5,8 @@ import time
 import sys
 
 import numpy as np
-# import matplotlib.pyplot as plt
-from PIL import Image
+import matplotlib.pyplot as plt
+from PIL import Image, ImageDraw
 
 from typing import Tuple
 from scipy.sparse import coo_matrix
@@ -125,10 +125,53 @@ class Solver:
         S = np.array(S)
         S = np.clip(S/max_scale, 0, 1)
         self.S = np.array(S) 
+    
+    def save_fig_paper(self):
+        """
+        style of Fast and Effective L0 Gradient Minimization by Region Fusion
+        """ 
+        # draw signal
+        x = np.array([i for i in range(self.width)])
+        y1 = self.I[0][int(self.height/2)]
+        y2 = self.S[0][int(self.height/2)]
+
+        plt.figure()
+        plt.xticks([])
+        plt.yticks([])
+        plt.gca().yaxis.tick_left()
+
+        plt.plot(x, y1, color='yellow')
+        plt.savefig("input_signal.png", dpi=500, bbox_inches='tight', pad_inches=0)
+        
+        plt.plot(x, y2, color='red')
+        plt.savefig("signal.png", dpi=500, bbox_inches='tight', pad_inches=0)
+
+        # draw image
+        img = Image.open(self.save_file)
+        draw = ImageDraw.Draw(img)
+        line_color = (255, 0, 0)
+        line_coord = [(0, int(self.height/2)), (self.width, int(self.height/2))]
+        draw.line(line_coord, fill=line_color, width=2)
+        img.save("line.png")
+
+        # draw image
+        img = Image.open(self.input_file)
+        draw = ImageDraw.Draw(img)
+        line_color = (255, 0, 0)
+        line_coord = [(0, int(self.height/2)), (self.width, int(self.height/2))]
+        draw.line(line_coord, fill=line_color, width=2)
+        img.save("input_line.png")
+
+
+
+
 
     def save_fig(self):
         image = Image.fromarray(to_img(self.S))
         image.save(self.save_file)  
+        self.save_fig_paper()
+
+
 
     @abc.abstractmethod
     def optimize(self) -> None:

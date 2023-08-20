@@ -1,7 +1,12 @@
 *.jpg
 *.png
+*.obj
 hdr
 build
 lib
 !benchmark.png
-
+mesh_test
+image_test
+LU_demo.py
+test.sh
+mesh_v2.sh

@@ -63,14 +63,54 @@ python image.py -h
 
 ## 网格模块
 
+对于稀疏矩阵的求解，需要安装
+
+```
+conda install -c conda-forge scikit-sparse
+```
+
+
+mesh.py实现了网格的$L_0$算法，你可以通过
+```
+python image.py -h
+```
+
+ 查看所有参数设置
+
+ 分别给出了3种数据结构：
+ - vert：基于顶点的数据结构，cot作为权重
+ - edge：基于边的数据结构，cot作为权重
+ - area：基于边的数据结构，面积作为权重
+ ```
+ python mesh.py --input ./input/bunny_fine.obj --out ./bunny.obj -m vert
+ python mesh.py -m vert 
+ python mesh.py -m vfft --output ./fft.obj
+ ```
+ 如果不指定输出文件，将会在当前路径下生成`res.obj`
+
+ 这里使用pyvista来实现网格的查看和图片保存
+ ```
+ python render.py --show 
+ python render.py --input ./input/bunny_fine.obj
+ python render.py --input ./fft.obj --show
+ ```
+
+ 同样，这里提供`mesh.sh`进行对测试用例的批量自动解算和渲染（需要安装blender）
+
+
+
 ## TODO
 目前HDR的compression factor直接设置成0.2，没有进一步按照02年那篇设置成自适应的，而且生成结果看上去也不大对，尤其是$L_0$的方法
 
 ##毕业设计相关
 执行以下脚本获得相应section的配图
 ```
+bash l0image.sh
 bash hdr.sh
 python benchmark.py
+bash mesh_v.sh # 顶点方法
+bash mesh_e.sh # 边方法
+bash mesh_a.sh # 面积方法
 ```
 
 
@@ -79,3 +119,4 @@ https://www.cse.cuhk.edu.hk/~leojia/projects/L0smoothing/
 https://people.csail.mit.edu/fredo/PUBLI/Siggraph2002/
 https://pybind11.readthedocs.io/en/stable/basics.html
 https://docs.nvidia.com/cuda/cufft/index.html#using-the-cufft-api
+https://scikit-sparse.readthedocs.io/en/latest/cholmod.html
